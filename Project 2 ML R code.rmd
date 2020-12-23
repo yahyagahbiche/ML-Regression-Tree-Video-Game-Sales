@@ -1,0 +1,504 @@
+---
+title: "Project 2"
+author: "Yahya Gahbiche, Dohoon Kim, Quynh Nguyen"
+date: "11/11/2020"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+
+
+```{r}
+# Clear environment of variables and functions
+rm(list = ls(all = TRUE))
+```
+
+
+```{r}
+# Clear environment of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""), detach, character.only = TRUE, unload = TRUE)
+```
+
+#Libraries
+```{r}
+library(data.table)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(rpart)
+library(rpart.plot)
+library(forecast)
+library(gridExtra)
+library(tinytex)
+```
+
+#Project Goal
+
++ This project aims to help Peter Parker predict sales in different regions using the given video game dataset. The dataset contains 27 different variables with 55792 observations. We used a machine learning technique to accomplish the goal, specifically, the regression decision tree to predict the outcome variable, global sales. This project is necessary for Peter Parker because it helps him save time, human resources, and money to be allocated effectively and efficiently.
+
+#Objective
+
++ The formal objective is to predict future sales based on historical data using the predictive analysis technique.
+
+
+#Load data
+```{r}
+# Importing data
+game <- read.csv("vgsales-3.csv", header = TRUE)
+```
+
+# EDA : Step 1
+
+## Uni-variate non-graphical Analysis
+
+```{r}
+# Looking at 10 rows of the data
+head(game, 10)
+```
+
+**Comments:**
+
+
+        - There are 23 indipendent variables and there are no duplicate columns
+        - Data appears tidy
+        - There are some independent varialbes that we will not be using, so we will remove them in the data wrangling process
+        - There are some NA values, we will ignore those values for now
+        
+        
+```{r}
+
+# Data Structure
+str(game)
+```
+
+**Comments:**
+
+      - Some of the variables that are characters need to be converted to factor variables
+        
+        - Genre, ESRB_Rating, Platform, Publisher, Developer
+        
+
+```{r}
+# Summary
+summary(game)
+```
+
+**Comments:**
+        
+        - Critic_Score: The mean is less the median therefore the data is positively skewed (skewed to the right)
+        
+        - There are many NAs in the following variables:
+          
+          - Critic_Score, User_Score, Total_Shipped
+          
+          - The reason why there so many NA values in Global_Sales, NA_Sales, PAL_Sales, JP_Sales, and Other_Sales is because we will predict those values in our predictive analysis. 
+          
+
+# Data wrangling
+
+```{r}
+t(t(names(game)))
+#Select variables
+game_newdata <- game %>% 
+  select(c(4:8, 13, 18))
+
+#Veriying changes
+str(game_newdata)
+
+#Changing data type
+game_newdata$Genre <- as.factor(game_newdata$Genre)
+game_newdata$ESRB_Rating <- as.factor(game_newdata$ESRB_Rating)
+game_newdata$Platform <- as.factor(game_newdata$Platform)
+game_newdata$Publisher <- as.factor(game_newdata$Publisher)
+game_newdata$Developer <- as.factor(game_newdata$Developer)
+game_newdata$Year <- as.Date(as.character(game_newdata$Year), format = "%Y")
+str(game_newdata) 
+```
+
+# EDA: Step 2          
+## Univariate Graphical EDA
+```{r}
+#Genre
+graph1 <- game_newdata %>% 
+  count(Genre) %>% 
+  top_n(10) %>% 
+  ggplot(mapping = aes(x = reorder(Genre,n), y = n)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  theme_classic() +
+  labs(title = "Popular Genre",
+       x = "Types of Genre",
+       y = "Genre Count")
+
+#Closer look at the low count of Genre level
+graph2 <- game_newdata %>% 
+  filter(Genre == c("Board Game", "Education", "Sandbox")) %>% 
+  count(Genre) %>% 
+  ggplot(mapping = aes(x = Genre, y = n)) +
+  geom_bar(stat = "identity") +
+  theme_classic()
+
+grid.arrange(graph1, graph2, ncol = 2)
+```
+
+**Comments**
+
++ Based on bar graph illustrating popularity of the Genre, Misc is the most popular and followed by Action, Adventure, Sports, Shooter, Role-Playing, Platform, Strategy, Puzzle, and Racing.
+
+    - Board Game, Education, and Sandbox have a very low observation in the dataset;therefore, we decided to exclude them from further analysis
+```{r}
+#ESRB_Rating
+game_newdata %>% 
+  count(ESRB_Rating) %>% 
+  ggplot(mapping = aes(x = reorder(ESRB_Rating,n), y = n)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  scale_y_log10() +
+  theme_classic() +
+  labs(title = "Popularity of ESRB Rating",
+       x = "ESRB Rating",
+       y = "Frequency")
+```
+
+**Comments**
+
++ The large number of ERSB ratings is missing from the dataset.
+
++ E is the most popular as it includes all ages and followed by T, M, and E10.
+
+```{r}
+#platform
+table(game_newdata$Platform)
+game_newdata %>% 
+  select(Platform, Year) %>% 
+  filter(Year >= 2010) %>% 
+  group_by(Platform) %>% 
+  summarize(count_plat = n()) %>% 
+  arrange(desc(count_plat)) %>% 
+  mutate(Platform = case_when(Platform %like% 'PS' ~ "Sony Series",
+                              Platform %in% '3DS' ~ "Nintendo Series",
+                              Platform %like% 'NS' ~ "Nintendo Series",
+                              Platform %like% 'X' ~ "MS Series",
+                              Platform %like% 'And|ios' ~ "Phone",
+                              Platform %like% 'PC' ~ "PC",
+                              TRUE ~ 'Others')) %>% 
+  group_by(Platform) %>% 
+  summarise(count_plat = sum(count_plat)) %>% 
+  ggplot(mapping = aes(x = reorder(Platform, -count_plat), y = count_plat)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  labs(x = "Platform",
+       y = "Frequency",
+       title = "Frequency of Platform",
+       subtitle = "Sony and PC are the most popular game platform")
+```
+
+**Comments**
+
++ "Others" represent the combinations of multiple small platforms that are not very popular, hence grouping them in one category will help us with our analysis.
+
++ Sony is the leader in the sales by volume, followed by PC, Microsoft and Nintendo. However, Phones (android and ios) have the lowest count which can be due to lack of compatibility in the gaming industry
+
+```{r}
+#publisher
+table(game_newdata$Publisher) 
+
+game_newdata %>% 
+  select(Publisher) %>% 
+  group_by(Publisher) %>% 
+  summarize(count_pub = n()) %>% 
+  top_n(11) %>% 
+  mutate(Publisher = case_when(Publisher %like% 'Unknown' ~ "Unknown",
+                              Publisher %in% 'Sega' ~ "Sega",
+                              Publisher %like% 'Activision' ~ "Activision Series",
+                              Publisher %like% 'Ubisoft' ~ "Ubisoft",
+                              Publisher %like% 'Electronic Arts' ~ "Electronic Arts",
+                              Publisher %like% 'Konami' ~ "Konami",
+                              Publisher %like% 'Sony Computer Entertainment' ~ "Sony",
+                              Publisher %like% 'Nintendo' ~ "Nintendo",
+                              Publisher %like% 'Microsoft' ~ "Microsoft",
+                              Publisher %like% 'THQ' ~ "THQ",
+                              TRUE ~ "Others")) %>% 
+  ggplot(mapping = aes(reorder(x = Publisher, -count_pub), y = count_pub)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 45,
+                                   hjust = 1)) +
+  labs(title = "Number of Publisher published game",
+       x = "Publisher",
+       y = "Frequency")
+```
+
+**Comments**
+
++ Many dataset is marked as unknown.
+
++ Sega outperforms the rest of the Publisher (over 2000). The remaining publishers have a relatively similar count.
+  
+```{r}
+#Developer
+table(game_newdata$Developer)
+
+game_newdata %>% 
+  select(Developer) %>% 
+  group_by(Developer) %>% 
+  summarize(count_dev = n()) %>% 
+  arrange(desc(count_dev)) %>% 
+  mutate(Developer = case_when(Developer %like% 'Unknown' ~ "Unknown",
+                              Developer %in% 'Konami' ~ "Konami",
+                              Developer %like% 'Sega' ~ "Sega",
+                              Developer %like% 'Capcom' ~ "Capcom",
+                              Developer %like% 'Namco' ~ "Namco",
+                              Developer %like% 'SNK Corporation' ~ "SNK Corporation",
+                              Developer %like% 'Hudson Soft' ~ "Hudson Soft",
+                              Developer %like% 'EA Canada' ~ "EA Canada",
+                              Developer %like% 'Bandai' ~ "Bandai",
+                              Developer %like% 'Ubisoft' ~ "Ubisoft",
+                              TRUE ~ "Others")) %>% 
+  ggplot(mapping = aes(x = reorder(Developer, count_dev), y = count_dev)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  coord_flip() +
+  labs(title = "Number of Develpers developed game",
+       x = "Developer",
+       y = "Frequency")
+  
+```
+
+**Comments**
+
++ To reduce the number of levels in Developer, we aggregated all data which is not listed in the top 10 as "Others".
+
++ Konami, Sega, Namco, Ubisoft, and Capcom outperfrom other developers. They have released the most popular games 
+
+#EDA: Step:3
+## Multivariate Graphical EDA
+```{r}
+#Trend of Genre over the years
+game_newdata %>% 
+  select(Genre, Year) %>% 
+  filter(Year >= 2010) %>% 
+  group_by(Year, Genre) %>% 
+  summarize(count_genre = n()) %>% 
+  top_n(10) %>% 
+  arrange(desc(count_genre)) %>% 
+  ggplot(mapping = aes(x = Year, y = count_genre, color = Genre)) +
+  scale_y_log10() +
+  geom_line() +
+  facet_wrap(~Genre, nrow = 5) +
+  theme_classic() +
+  labs(title = "Trend of Genre over the Years",
+       subtitle = "Action, Fighting and Misc is the most popular",
+       y = "Frequency")
+```
+
+
+**Comments**
+
++ Except for Action-Adeventure genre, others experience fluctuation afer 2010.
+
+    - This seems that the demand for the gaming industry is slowly decreasing as other technologies bring entertainment for people such as mobile streaming services. (Twitch and Youtube)
+    
+    - However, the action-adventure genre is steadily beloved by people even though the gaming industry is not performing well.
+
+```{r}
+table(game_newdata$Platform)
+#Trend of Platform over the years
+game_newdata %>% 
+  mutate(Platform = case_when(Platform %like% 'PS' ~ "Sony Series",
+                              Platform %in% '3DS' ~ "Nintendo Series",
+                              Platform %like% 'NS' ~ "Nintendo Series",
+                              Platform %like% 'X' ~ "MS Series",
+                              Platform %like% 'And|ios' ~ "Phone",
+                              Platform %like% 'PC' ~ "PC",
+                              TRUE ~ 'Others')) %>%   
+  select(Platform, Year) %>% 
+  filter(Year >= 2010) %>% 
+  group_by(Year, Platform) %>% 
+  summarize(count_plat = n()) %>% 
+  top_n(10) %>% 
+  arrange(desc(count_plat)) %>% 
+  ggplot(mapping = aes(x = Year, y = count_plat, color = Platform)) +
+  scale_y_log10() +
+  geom_line() +
+  facet_wrap(~Platform) +
+  theme_classic() +
+  labs(title = "Trend of Platform over the Years",
+       subtitle = "PC platform continue to perform better than other platforms",
+       y = "Frequency")
+```
+
+**Comments**
+
++ As we observed a sudden decrease in Genre, this phenomenon happens with the platform over the years.
+
++ Nintendo comparing with other platforms such as Sony, MS, and PC experiences more sudden decrease after 2010.
+
+    - However, the decrease in PC is not as drastic as other platforms.
+
+#Reshaping the data
+```{r}
+#transform platform variable
+game_newdata<- game_newdata %>% 
+    filter(Year >= "2010-01-01") %>% 
+    mutate(Platform_new = case_when(Platform %like% 'PS' ~ "Sony Series",
+                              Platform %in% '3DS' ~ "Nintendo Series",
+                              Platform %like% 'NS' ~ "Nintendo Series",
+                              Platform %like% 'X' ~ "MS Series",
+                              Platform %like% 'And|ios' ~ "Phone",
+                              Platform %like% 'PC' ~ "PC",
+                              TRUE ~ 'Others')) %>% 
+    mutate(Publisher_new = case_when(Publisher %like% 'Unknown' ~ "Unknown",
+                              Publisher %in% 'Sega' ~ "Sega",
+                              Publisher %like% 'Activision' ~ "Activision Series",
+                              Publisher %like% 'Ubisoft' ~ "Ubisoft",
+                              Publisher %like% 'Electronic Arts' ~ "Electronic Arts",
+                              Publisher %like% 'Konami' ~ "Konami",
+                              Publisher %like% 'Sony Computer Entertainment' ~ "Sony",
+                              Publisher %like% 'Nintendo' ~ "Nintendo",
+                              Publisher %like% 'Microsoft' ~ "Microsoft",
+                              Publisher %like% 'THQ' ~ "THQ",
+                              TRUE ~ "Others")) %>% 
+    mutate(Genre_new = case_when(Genre %like% 'Misc' ~ "Misc",
+                              Genre %in% 'Action' ~ "Action",
+                              Genre %like% 'Adventure' ~ "Adventure",
+                              Genre %like% 'Sports' ~ "Sports",
+                              Genre %like% 'Shooter' ~ "Shooter",
+                              Genre %like% 'Role-playing' ~ "Role-playing",
+                              Genre %like% 'Platform' ~ "Platform",
+                              Genre %like% 'Strategy' ~ "Strategy",
+                              Genre %like% 'Puzzle' ~ "Puzzle",
+                              Genre %like% 'Racing' ~ "Racing",
+                              TRUE ~ "Others")) %>% 
+    mutate(Developer_new = case_when(Developer %like% 'Unknown' ~ "Unknown",
+                              Developer %in% 'Konami' ~ "Konami",
+                              Developer %like% 'Sega' ~ "Sega",
+                              Developer %like% 'Capcom' ~ "Capcom",
+                              Developer %like% 'Namco' ~ "Namco",
+                              Developer %like% 'SNK Corporation' ~ "SNK Corporation",
+                              Developer %like% 'Hudson Soft' ~ "Hudson Soft",
+                              Developer %like% 'EA Canada' ~ "EA Canada",
+                              Developer %like% 'Bandai' ~ "Bandai",
+                              Developer %like% 'Ubisoft' ~ "Ubisoft",
+                              TRUE ~ "Others"))
+
+#drop old variables
+game_newdata <- game_newdata %>% 
+  select(-c(1,3:5))
+#verifying changes
+str(game_newdata)
+```
+
+#Predictive Analysis
+
+##Training validation split
+```{r}
+#Training validation split
+set.seed(666)
+
+train_index <- sample(1:nrow(game_newdata), 0.6 * nrow(game_newdata))
+valid_index <- setdiff(1:nrow(game_newdata), train_index)
+
+train_df <- game_newdata[train_index,]
+valid_df <- game_newdata[valid_index,]
+#Verifying
+nrow(train_df)
+nrow(valid_df)
+head(train_df)
+head(valid_df)
+
+#reorder column
+game_newdata <- 
+  game_newdata[c(1,3:7,2)]
+
+game_newdata$Year <- as.factor(game_newdata$Year)
+game_newdata$Platform_new <- as.factor(game_newdata$Platform_new)
+game_newdata$Publisher_new <- as.factor(game_newdata$Publisher_new)
+game_newdata$Developer_new <- as.factor(game_newdata$Developer_new)
+game_newdata$Genre_new <- as.factor(game_newdata$Genre_new)
+str(game_newdata) 
+```
+
+##Regression Tree 1
+```{r}
+#Building regression tree
+regress_tr <- rpart(Global_Sales ~ ESRB_Rating + Year + Platform_new +
+                      Publisher_new + Genre_new + Developer_new,
+                    data = train_df, method = "anova", maxdepth = 10)
+prp(regress_tr)
+```
+##Accuracy
+```{r}
+#Predict using the train and valid
+predict_train <- predict(regress_tr, train_df)
+accuracy(predict_train, train_df$Global_Sales)
+
+predict_valid <- predict(regress_tr, valid_df)
+accuracy(predict_valid, valid_df$Global_Sales)
+```
+
+##Regression Tree 2
+
+```{r}
+regress_tr_shallow <- rpart(Global_Sales ~ ESRB_Rating + Year + Publisher_new + Developer_new,
+                            data = train_df, method = "anova", 
+                            minbucket = 2, maxdepth = 10) 
+prp(regress_tr_shallow)
+```
+
+##Accuracy
+```{r}
+#Predict using the train and valid
+predict_train_shallow <- predict(regress_tr_shallow, train_df)
+accuracy(predict_train_shallow, train_df$Global_Sales)
+
+predict_valid_shallow <- predict(regress_tr_shallow, valid_df)
+accuracy(predict_valid_shallow, valid_df$Global_Sales)
+```
+
+**Comments**
+
++ Final datamining model
+
+    - The algorithm that we used to predict global sales is regression decision tree. This algorithm is widely used when we want to predict the numerical outcome variables (global sales). The algorithm will choose the variables that are the most significant in predicting the outcome variable.
+    
+    - The transformed dataset to build an algorithm contains fewer variables compared to the original dataset. Therefore, we decided to keep all variables to build an algorithm but reduce the number of factors in each variable to avoid problems such as overfitting and complexity of the algorithm.
+    
+    - Before building the model predicting the volume of the gloabl sales, we assumed that highest sales is associated with recent years as gaming industry is evolving continously.
+    
+    - We also assumped that ESRB rating A and M will bring the most sales because they hold more buying power compared to teenagers.
+    
++ Interpretation of findings
+
+    - Since the goal of the project is predicting the highest sales of the target variable, we are going to focous only on highest end node that has highest number in sales (4.2 million dollars).
+    
+    - If the ESRB is not equal to NA, E, E10, EC RP, and T then we move to Publisher.
+    - If the Publisher is not equal to EIA, Konami, Nintento, Others, Sega, Sony, THQ, Ubisoft, and Unk, then we move to Year.
+    - IF the Year is not equal to 2013, 2014, 2015, and 2016 then we predict that the global sales will be 4.2 million dollars
+    
++ Quality of the model
+
+    - The RMSE of the first model in the training dataset is 0.8647, whereas the RMSE of the validation dataset is 0.8844. This represents that the model is not overfitting, as the difference in RMSE is small.
+    
+    - The RMSE of the second model in the training dataset is 0.92078, whereas the RMSE of the validation dataset is 0.9074. This represents that the model has an overfitting problem and is not good for predicting global sales.
+    
++ Recommendations
+
+    - Based on the findings, our recomeendations are as follows:
+    
+        - In order to maximize the global sales, we should focus on games targeting towards adults and mature audience. In addition, Peter Parker should focus on games that has been released on the yaer of 2010-2012 and 2017-current to maximize the profit of the sales.
+        
++ Sustainability of the project.
+
+    - Because of rapid changes in the gaming industry, Peter Parker should update the dataset every quarter to follow the change of trend and build the model accordingly.
+    
++ What other data can be used to enhance the model?
+
+    - Adding more variables such as E-Sports related, Twitch, and YouTube can help to enhance the model.
+    
+    - Upon the new release of PS5 and Xbox, we should update our dataset to capture the outcome variable more accurately.
+    
+    - Furthermore, with the enhancement of technology, VR technology is becoming more popular, and we should consider including these in the future dataset.
+    
